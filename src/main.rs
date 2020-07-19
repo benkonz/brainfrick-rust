@@ -3,7 +3,6 @@ mod runtime;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
-use crate::runtime::Runtime;
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
@@ -14,8 +13,8 @@ fn main() -> Result<(), String> {
 
     let mut f = File::open(&args[1]).map_err(|e| format!("{:?}", e))?;
     let mut program = Vec::new();
-    f.read_to_end(&mut program).map_err(|e| format!("{:?}", e))?;
+    f.read_to_end(&mut program)
+        .map_err(|e| format!("{:?}", e))?;
 
-    let mut runtime = Runtime::new();
-    runtime.execute(&program)
+    runtime::execute(&program)
 }
