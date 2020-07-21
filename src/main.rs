@@ -41,6 +41,8 @@ fn main() -> Result<(), String> {
     f.read_to_end(&mut program)
         .map_err(|e| format!("{:?}", e))?;
 
+    Target::initialize_all(&InitializationConfig::default());
+
     let target_triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&target_triple).map_err(|e| format!("{:?}", e))?;
     let target_machine = target
