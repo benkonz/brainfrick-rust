@@ -5,7 +5,10 @@ mod runtime;
 
 use clap::{App, Arg};
 use inkwell::context::Context;
-use inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetMachine, InitializationConfig};
+use inkwell::module::Linkage;
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 use inkwell::OptimizationLevel;
 use std::env;
 use std::fs::File;
@@ -35,21 +38,38 @@ fn main() -> Result<(), String> {
     let module = context.create_module("brainfrick-rust");
     let builder = context.create_builder();
 
-    let source_filename = matches.value_of("INPUT").unwrap();
-    let mut f = File::open(source_filename).map_err(|e| format!("{:?}", e))?;
-    let mut program = Vec::new();
-    f.read_to_end(&mut program)
-        .map_err(|e| format!("{:?}", e))?;
+    let i32_type = context.i32_type();
+    let i32_one = i32_type.const_int(10, false);
+    let main_fn_type = i32_type.fn_type(&[], false);
+
+    let main_fn_val = module.add_function("main", main_fn_type, Some(Linkage::External));
+    let basic_block = context.append_basic_block(main_fn_val, "entry");
+
+    builder.position_at_end(basic_block);
+
+    builder.build_return(Some(&i32_one));
+
+    // let data = builder.build_alloca(context.i8_type(), "data");
+    // let ptr = builder.build_alloca(context.i8_type(), "data");
+
+    // let source_filename = matches.value_of("INPUT").unwrap();
+    // let mut f = File::open(source_filename).map_err(|e| format!("{:?}", e))?;
+    // let mut program = Vec::new();
+    // f.read_to_end(&mut program)
+    //     .map_err(|e| format!("{:?}", e))?;
 
     Target::initialize_all(&InitializationConfig::default());
 
     let target_triple = TargetMachine::get_default_triple();
+    let cpu = TargetMachine::get_host_cpu_name().to_string();
+    let features = TargetMachine::get_host_cpu_features().to_string();
+
     let target = Target::from_triple(&target_triple).map_err(|e| format!("{:?}", e))?;
     let target_machine = target
         .create_target_machine(
             &target_triple,
-            "generic",
-            "",
+            &cpu,
+            &features,
             OptimizationLevel::Default,
             RelocMode::Default,
             CodeModel::Default,
@@ -58,8 +78,7 @@ fn main() -> Result<(), String> {
 
     let output_filename = matches.value_of("output").unwrap();
     target_machine
-        .write_to_file(&module, FileType::Assembly, output_filename.as_ref())
+        .write_to_file(&module, FileType::Object, output_filename.as_ref())
         .map_err(|e| format!("{:?}", e))?;
-
-    runtime::execute(&program)
+    Ok(())
 }
