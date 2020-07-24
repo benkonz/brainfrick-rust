@@ -1,3 +1,5 @@
 /target
 .vscode/
 tests/
+*.o
+*.exe
