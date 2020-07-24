@@ -39,27 +39,28 @@ fn main() -> Result<(), String> {
     let builder = context.create_builder();
 
     let i32_type = context.i32_type();
-    let i8_type = context.i8_type();
-    let i8_ptr_type = i8_type.ptr_type(AddressSpace::Generic);
-    let i32_zero = i32_type.const_int(0, false);
-    let i32_memory_size = i32_type.const_int(30_000, false);
-    let i32_element_size = i32_type.const_int(1, false);
     let main_fn_type = i32_type.fn_type(&[], false);
-
     let main_fn_val = module.add_function("main", main_fn_type, Some(Linkage::External));
+    
     let basic_block = context.append_basic_block(main_fn_val, "entry");
     builder.position_at_end(basic_block);
+
+    let i8_type = context.i8_type();
+    let i8_ptr_type = i8_type.ptr_type(AddressSpace::Generic);
 
     let data = builder.build_alloca(i8_ptr_type, "data");
     let ptr = builder.build_alloca(i8_ptr_type, "ptr");
 
-    let calloc_fn_type = i32_type.fn_type(&[i32_type.into(), i32_type.into()], false);
+    let i64_type = context.i64_type();
+    let i64_memory_size = i64_type.const_int(30_000, false);
+    let i64_element_size = i64_type.const_int(1, false);
+
+    let calloc_fn_type = i8_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
     let calloc_fn_val = module.add_function("calloc", calloc_fn_type, Some(Linkage::External));
 
-    let data_ptr = builder.build_call(calloc_fn_val, &[i32_memory_size.into(), i32_element_size.into()], "call");
+    let data_ptr = builder.build_call(calloc_fn_val, &[i64_memory_size.into(), i64_element_size.into()], "call");
     let data_ptr_result: Result<_, _> = data_ptr.try_as_basic_value().flip().into();
     let data_ptr_basic_val = data_ptr_result.map_err(|_| "calloc returned void for some reason!")?;
-
 
     builder.build_store(data, data_ptr_basic_val);
     builder.build_store(ptr, data_ptr_basic_val);
@@ -70,6 +71,7 @@ fn main() -> Result<(), String> {
     // f.read_to_end(&mut program)
     //     .map_err(|e| format!("{:?}", e))?;
 
+    let i32_zero = i32_type.const_int(0, false);
     builder.build_return(Some(&i32_zero));
 
     Target::initialize_all(&InitializationConfig::default());
