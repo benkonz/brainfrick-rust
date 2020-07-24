@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
     let calloc_fn_type = i8_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
     let calloc_fn_val = module.add_function("calloc", calloc_fn_type, Some(Linkage::External));
 
-    let data_ptr = builder.build_call(calloc_fn_val, &[i64_memory_size.into(), i64_element_size.into()], "call");
+    let data_ptr = builder.build_call(calloc_fn_val, &[i64_memory_size.into(), i64_element_size.into()], "calloc_call");
     let data_ptr_result: Result<_, _> = data_ptr.try_as_basic_value().flip().into();
     let data_ptr_basic_val = data_ptr_result.map_err(|_| "calloc returned void for some reason!")?;
 
@@ -70,6 +70,8 @@ fn main() -> Result<(), String> {
     // let mut program = Vec::new();
     // f.read_to_end(&mut program)
     //     .map_err(|e| format!("{:?}", e))?;
+
+    builder.build_free(builder.build_load(data, "load").into_pointer_value());
 
     let i32_zero = i32_type.const_int(0, false);
     builder.build_return(Some(&i32_zero));
