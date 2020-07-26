@@ -27,9 +27,9 @@ impl<'ctx> Compiler<'ctx> {
         while pc < program.len() {
             match program[pc] as char {
                 '>' => self.build_add_ptr(1, &ptr),
-                '<' => self.build_add_ptr(1, &ptr),
-                '+' => self.build_add(1),
-                '-' => self.build_add(-1),
+                '<' => self.build_add_ptr(-1, &ptr),
+                '+' => self.build_add(1, &ptr),
+                '-' => self.build_add(-1, &ptr),
                 '.' => self.build_put(),
                 ',' => self.build_get(),
                 '[' => self.build_while_start(),
@@ -89,17 +89,22 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    // TODO: figure out how to have negative numbers
-    fn build_add_ptr(&self, amount: u64, ptr: &PointerValue) {
+    fn build_add_ptr(&self, amount: i32, ptr: &PointerValue) {
         let i32_type = self.context.i32_type();
-        let i32_one = i32_type.const_int(amount, false);
-        let incremented =
+        let i32_amount = i32_type.const_int(amount as u64, false);
+        let result =
             self.builder
-                .build_int_add(ptr.const_to_int(i32_type), i32_one, "add to data ptr");
-        self.builder.build_store(*ptr, incremented);
+                .build_int_add(ptr.const_to_int(i32_type), i32_amount, "add to data ptr");
+        self.builder.build_store(*ptr, result);
     }
 
-    fn build_add(&self, amount: i32) {}
+    fn build_add(&self, amount: i8, ptr: &PointerValue) {
+        let i8_type = self.context.i8_type();
+        let i8_amount = i8_type.const_int(amount as u64, false);
+        let tmp = self.builder.build_load(*ptr, "load ptr value").into_pointer_value();
+        let result = self.builder.build_int_add(tmp.const_to_int(i8_type), i8_amount, "add to data ptr");
+        self.builder.build_store(tmp, result);
+    }
 
     fn build_get(&self) {}
 
@@ -138,7 +143,7 @@ impl<'ctx> Compiler<'ctx> {
             .ok_or_else(|| "Unable to create target machine!".to_string())?;
 
         target_machine
-            .write_to_file(&self.module, FileType::Object, output_filename.as_ref())
+            .write_to_file(&self.module, FileType::Assembly, output_filename.as_ref())
             .map_err(|e| format!("{:?}", e))
     }
 }
