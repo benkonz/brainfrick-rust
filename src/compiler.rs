@@ -124,23 +124,30 @@ impl<'ctx> Compiler<'ctx> {
     fn build_add_ptr(&self, amount: i32, ptr: &PointerValue) {
         let i32_type = self.context.i32_type();
         let i32_amount = i32_type.const_int(amount as u64, false);
-        let result =
-            self.builder
-                .build_int_add(ptr.const_to_int(i32_type), i32_amount, "add to data ptr");
+        let ptr_load = self
+            .builder
+            .build_load(*ptr, "load ptr")
+            .into_pointer_value();
+        let result = self.builder.build_int_add(
+            ptr_load.const_to_int(i32_type),
+            i32_amount,
+            "add to data ptr",
+        );
         self.builder.build_store(*ptr, result);
     }
 
     fn build_add(&self, amount: i8, ptr: &PointerValue) {
         let i8_type = self.context.i8_type();
         let i8_amount = i8_type.const_int(amount as u64, false);
-        let tmp = self
+        let ptr_load = self
             .builder
-            .build_load(*ptr, "load ptr value")
+            .build_load(*ptr, "load ptr")
             .into_pointer_value();
-        let result =
-            self.builder
-                .build_int_add(tmp.const_to_int(i8_type), i8_amount, "add to data ptr");
-        self.builder.build_store(tmp, result);
+        let ptr_val = self.builder.build_load(ptr_load, "load ptr value");
+        let result = self
+            .builder
+            .build_int_add(ptr_val.into_int_value(), i8_amount, "add to data ptr");
+        self.builder.build_store(ptr_load, result);
     }
 
     fn build_get(&self, functions: &Functions, ptr: &PointerValue) -> Result<(), String> {
