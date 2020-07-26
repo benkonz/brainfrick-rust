@@ -5,7 +5,7 @@ use inkwell::module::Module;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::values::PointerValue;
+use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::{AddressSpace, OptimizationLevel};
 
 pub struct Compiler<'ctx> {
@@ -14,14 +14,21 @@ pub struct Compiler<'ctx> {
     pub builder: Builder<'ctx>,
 }
 
+struct Functions<'ctx> {
+    calloc_fn: FunctionValue<'ctx>,
+    getchar_fn: FunctionValue<'ctx>,
+    putchar_fn: FunctionValue<'ctx>,
+}
+
 impl<'ctx> Compiler<'ctx> {
     pub fn init_targets() {
         Target::initialize_all(&InitializationConfig::default());
     }
 
     pub fn compile(&self, program: &[u8]) -> Result<(), String> {
+        let functions = self.init_functions();
         let (data, ptr) = self.build_main();
-        self.build_calloc(&data, &ptr)?;
+        self.init_pointers(&functions, &data, &ptr)?;
 
         let mut pc = 0;
         while pc < program.len() {
@@ -30,8 +37,8 @@ impl<'ctx> Compiler<'ctx> {
                 '<' => self.build_add_ptr(-1, &ptr),
                 '+' => self.build_add(1, &ptr),
                 '-' => self.build_add(-1, &ptr),
-                '.' => self.build_put(),
-                ',' => self.build_get(),
+                '.' => self.build_put(&functions, &ptr),
+                ',' => self.build_get(&functions, &ptr)?,
                 '[' => self.build_while_start(),
                 ']' => self.build_while_end(),
                 _ => (),
@@ -42,6 +49,33 @@ impl<'ctx> Compiler<'ctx> {
         self.return_zero();
 
         Ok(())
+    }
+
+    fn init_functions(&self) -> Functions {
+        let i32_type = self.context.i32_type();
+        let i64_type = self.context.i64_type();
+        let i8_type = self.context.i8_type();
+        let i8_ptr_type = i8_type.ptr_type(AddressSpace::Generic);
+
+        let calloc_fn_type = i8_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        let calloc_fn = self
+            .module
+            .add_function("calloc", calloc_fn_type, Some(Linkage::External));
+
+        let getchar_fn_type = i32_type.fn_type(&[], false);
+        let getchar_fn =
+            self.module
+                .add_function("getchar", getchar_fn_type, Some(Linkage::External));
+
+        let putchar_fn_type = i32_type.fn_type(&[i32_type.into()], false);
+        let putchar_fn =
+            self.module
+                .add_function("putchar", putchar_fn_type, Some(Linkage::External));
+        Functions {
+            calloc_fn,
+            getchar_fn,
+            putchar_fn,
+        }
     }
 
     fn build_main(&self) -> (PointerValue, PointerValue) {
@@ -62,20 +96,18 @@ impl<'ctx> Compiler<'ctx> {
         (data, ptr)
     }
 
-    fn build_calloc(&self, data: &PointerValue, ptr: &PointerValue) -> Result<(), String> {
+    fn init_pointers(
+        &self,
+        functions: &Functions,
+        data: &PointerValue,
+        ptr: &PointerValue,
+    ) -> Result<(), String> {
         let i64_type = self.context.i64_type();
-        let i8_type = self.context.i8_type();
-        let i8_ptr_type = i8_type.ptr_type(AddressSpace::Generic);
         let i64_memory_size = i64_type.const_int(30_000, false);
         let i64_element_size = i64_type.const_int(1, false);
 
-        let calloc_fn_type = i8_ptr_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-        let calloc_fn_val =
-            self.module
-                .add_function("calloc", calloc_fn_type, Some(Linkage::External));
-
         let data_ptr = self.builder.build_call(
-            calloc_fn_val,
+            functions.calloc_fn,
             &[i64_memory_size.into(), i64_element_size.into()],
             "calloc_call",
         );
@@ -101,14 +133,53 @@ impl<'ctx> Compiler<'ctx> {
     fn build_add(&self, amount: i8, ptr: &PointerValue) {
         let i8_type = self.context.i8_type();
         let i8_amount = i8_type.const_int(amount as u64, false);
-        let tmp = self.builder.build_load(*ptr, "load ptr value").into_pointer_value();
-        let result = self.builder.build_int_add(tmp.const_to_int(i8_type), i8_amount, "add to data ptr");
+        let tmp = self
+            .builder
+            .build_load(*ptr, "load ptr value")
+            .into_pointer_value();
+        let result =
+            self.builder
+                .build_int_add(tmp.const_to_int(i8_type), i8_amount, "add to data ptr");
         self.builder.build_store(tmp, result);
     }
 
-    fn build_get(&self) {}
+    fn build_get(&self, functions: &Functions, ptr: &PointerValue) -> Result<(), String> {
+        let getchar_call = self
+            .builder
+            .build_call(functions.getchar_fn, &[], "getchar call");
+        let getchar_result: Result<_, _> = getchar_call.try_as_basic_value().flip().into();
+        let getchar_basicvalue =
+            getchar_result.map_err(|_| "getchar returned void for some reason!")?;
+        let i8_type = self.context.i8_type();
+        let truncated = self.builder.build_int_truncate(
+            getchar_basicvalue.into_int_value(),
+            i8_type,
+            "getchar truncate result",
+        );
+        let ptr_value = self
+            .builder
+            .build_load(*ptr, "load ptr value")
+            .into_pointer_value();
+        self.builder.build_store(ptr_value, truncated);
 
-    fn build_put(&self) {}
+        Ok(())
+    }
+
+    fn build_put(&self, functions: &Functions, ptr: &PointerValue) {
+        let char_to_put = self.builder.build_load(
+            self.builder
+                .build_load(*ptr, "load ptr value")
+                .into_pointer_value(),
+            "load ptr ptr value",
+        );
+        let s_ext = self.builder.build_int_s_extend(
+            char_to_put.into_int_value(),
+            self.context.i32_type(),
+            "putchar sign extend",
+        );
+        self.builder
+            .build_call(functions.putchar_fn, &[s_ext.into()], "putchar call");
+    }
 
     fn build_while_start(&self) {}
 
@@ -143,7 +214,7 @@ impl<'ctx> Compiler<'ctx> {
             .ok_or_else(|| "Unable to create target machine!".to_string())?;
 
         target_machine
-            .write_to_file(&self.module, FileType::Assembly, output_filename.as_ref())
+            .write_to_file(&self.module, FileType::Object, output_filename.as_ref())
             .map_err(|e| format!("{:?}", e))
     }
 }
