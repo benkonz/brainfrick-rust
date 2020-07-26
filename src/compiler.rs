@@ -128,11 +128,10 @@ impl<'ctx> Compiler<'ctx> {
             .builder
             .build_load(*ptr, "load ptr")
             .into_pointer_value();
-        let result = self.builder.build_int_add(
-            ptr_load.const_to_int(i32_type),
-            i32_amount,
-            "add to data ptr",
-        );
+        let result = unsafe {
+            self.builder
+                .build_in_bounds_gep(ptr_load, &[i32_amount], "add to pointer")
+        };
         self.builder.build_store(*ptr, result);
     }
 
@@ -144,9 +143,9 @@ impl<'ctx> Compiler<'ctx> {
             .build_load(*ptr, "load ptr")
             .into_pointer_value();
         let ptr_val = self.builder.build_load(ptr_load, "load ptr value");
-        let result = self
-            .builder
-            .build_int_add(ptr_val.into_int_value(), i8_amount, "add to data ptr");
+        let result =
+            self.builder
+                .build_int_add(ptr_val.into_int_value(), i8_amount, "add to data ptr");
         self.builder.build_store(ptr_load, result);
     }
 
