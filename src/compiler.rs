@@ -1,3 +1,4 @@
+use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Linkage;
@@ -6,7 +7,8 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 use inkwell::values::{FunctionValue, PointerValue};
-use inkwell::{AddressSpace, OptimizationLevel};
+use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+use std::collections::VecDeque;
 
 pub struct Compiler<'ctx> {
     pub context: &'ctx Context,
@@ -18,6 +20,13 @@ struct Functions<'ctx> {
     calloc_fn: FunctionValue<'ctx>,
     getchar_fn: FunctionValue<'ctx>,
     putchar_fn: FunctionValue<'ctx>,
+    main_fn: FunctionValue<'ctx>,
+}
+
+struct WhileBlock<'ctx> {
+    while_start: BasicBlock<'ctx>,
+    while_body: BasicBlock<'ctx>,
+    while_end: BasicBlock<'ctx>,
 }
 
 impl<'ctx> Compiler<'ctx> {
@@ -26,8 +35,9 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     pub fn compile(&self, program: &[u8]) -> Result<(), String> {
+        let mut while_blocks = VecDeque::new();
         let functions = self.init_functions();
-        let (data, ptr) = self.build_main();
+        let (data, ptr) = self.build_main(&functions);
         self.init_pointers(&functions, &data, &ptr)?;
 
         let mut pc = 0;
@@ -39,8 +49,8 @@ impl<'ctx> Compiler<'ctx> {
                 '-' => self.build_add(-1, &ptr),
                 '.' => self.build_put(&functions, &ptr),
                 ',' => self.build_get(&functions, &ptr)?,
-                '[' => self.build_while_start(),
-                ']' => self.build_while_end(),
+                '[' => self.build_while_start(&functions, &ptr, &mut while_blocks),
+                ']' => self.build_while_end(&mut while_blocks)?,
                 _ => (),
             }
             pc += 1;
@@ -71,20 +81,21 @@ impl<'ctx> Compiler<'ctx> {
         let putchar_fn =
             self.module
                 .add_function("putchar", putchar_fn_type, Some(Linkage::External));
+
+        let main_fn_type = i32_type.fn_type(&[], false);
+        let main_fn = self
+            .module
+            .add_function("main", main_fn_type, Some(Linkage::External));
         Functions {
             calloc_fn,
             getchar_fn,
             putchar_fn,
+            main_fn,
         }
     }
 
-    fn build_main(&self) -> (PointerValue, PointerValue) {
-        let i32_type = self.context.i32_type();
-        let main_fn_type = i32_type.fn_type(&[], false);
-        let main_fn_val = self
-            .module
-            .add_function("main", main_fn_type, Some(Linkage::External));
-        let basic_block = self.context.append_basic_block(main_fn_val, "entry");
+    fn build_main(&self, functions: &Functions) -> (PointerValue, PointerValue) {
+        let basic_block = self.context.append_basic_block(functions.main_fn, "entry");
         self.builder.position_at_end(basic_block);
 
         let i8_type = self.context.i8_type();
@@ -128,6 +139,7 @@ impl<'ctx> Compiler<'ctx> {
             .builder
             .build_load(*ptr, "load ptr")
             .into_pointer_value();
+        // unsafe because we are calling an unsafe function, since we could index out of bounds of the calloc
         let result = unsafe {
             self.builder
                 .build_in_bounds_gep(ptr_load, &[i32_amount], "add to pointer")
@@ -187,9 +199,66 @@ impl<'ctx> Compiler<'ctx> {
             .build_call(functions.putchar_fn, &[s_ext.into()], "putchar call");
     }
 
-    fn build_while_start(&self) {}
+    fn build_while_start(
+        &self,
+        functions: &Functions,
+        ptr: &PointerValue,
+        while_blocks: &mut VecDeque<WhileBlock<'ctx>>,
+    ) {
+        let num_while_blocks = while_blocks.len() + 1;
+        let while_block = WhileBlock {
+            while_start: self.context.append_basic_block(
+                functions.main_fn,
+                format!("while_start {}", num_while_blocks).as_str(),
+            ),
+            while_body: self.context.append_basic_block(
+                functions.main_fn,
+                format!("while_body {}", num_while_blocks).as_str(),
+            ),
+            while_end: self.context.append_basic_block(
+                functions.main_fn,
+                format!("while_end {}", num_while_blocks).as_str(),
+            ),
+        };
+        while_blocks.push_front(while_block);
+        let while_block = while_blocks.front().unwrap();
 
-    fn build_while_end(&self) {}
+        self.builder
+            .build_unconditional_branch(while_block.while_start);
+        self.builder.position_at_end(while_block.while_start);
+
+        let i8_type = self.context.i8_type();
+        let i8_zero = i8_type.const_int(0, false);
+        let ptr_load = self
+            .builder
+            .build_load(*ptr, "load ptr")
+            .into_pointer_value();
+        let ptr_value = self
+            .builder
+            .build_load(ptr_load, "load ptr value")
+            .into_int_value();
+        let cmp = self.builder.build_int_compare(
+            IntPredicate::NE,
+            ptr_value,
+            i8_zero,
+            "compare value at pointer to zero",
+        );
+
+        self.builder
+            .build_conditional_branch(cmp, while_block.while_body, while_block.while_end);
+        self.builder.position_at_end(while_block.while_body);
+    }
+
+    fn build_while_end(&self, while_blocks: &mut VecDeque<WhileBlock>) -> Result<(), String> {
+        if let Some(while_block) = while_blocks.pop_front() {
+            self.builder
+                .build_unconditional_branch(while_block.while_start);
+            self.builder.position_at_end(while_block.while_end);
+            Ok(())
+        } else {
+            Err("error: unmatched `]`".to_string())
+        }
+    }
 
     fn build_free(&self, data: &PointerValue) {
         self.builder
