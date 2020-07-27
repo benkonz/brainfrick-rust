@@ -1,2 +1,6 @@
 /target
 .vscode/
+tests/
+*.o
+*.exe
+test.bf

@@ -1,20 +1,50 @@
-mod runtime;
+#[macro_use]
+extern crate clap;
 
-use std::env;
+mod compiler;
+
+use crate::compiler::Compiler;
+use clap::{App, Arg};
+use inkwell::context::Context;
 use std::fs::File;
 use std::io::prelude::*;
 
 fn main() -> Result<(), String> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("requires a brainfuck file!");
-        return Ok(());
-    }
+    let matches = App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about(crate_description!())
+        .arg(
+            Arg::with_name("INPUT")
+                .help("source bf file to compile")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("output")
+                .short("o")
+                .help("output filename")
+                .takes_value(true)
+                .required(true),
+        )
+        .get_matches();
 
-    let mut f = File::open(&args[1]).map_err(|e| format!("{:?}", e))?;
+    Compiler::init_targets();
+
+    let context = Context::create();
+    let compiler = Compiler {
+        context: &context,
+        module: context.create_module("brainfrick-rust"),
+        builder: context.create_builder(),
+    };
+
+    let source_filename = matches.value_of("INPUT").unwrap();
+    let mut f = File::open(source_filename).map_err(|e| format!("{:?}", e))?;
     let mut program = Vec::new();
     f.read_to_end(&mut program)
         .map_err(|e| format!("{:?}", e))?;
 
-    runtime::execute(&program)
+    compiler.compile(&program)?;
+    let output_filename = matches.value_of("output").unwrap();
+    compiler.write_to_file(output_filename)
 }
