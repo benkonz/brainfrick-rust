@@ -6,8 +6,7 @@ mod compiler;
 use crate::compiler::Compiler;
 use clap::{App, Arg};
 use inkwell::context::Context;
-use std::fs::File;
-use std::io::prelude::*;
+use std::fs;
 
 fn main() -> Result<(), String> {
     let matches = App::new(crate_name!())
@@ -39,12 +38,9 @@ fn main() -> Result<(), String> {
     };
 
     let source_filename = matches.value_of("INPUT").unwrap();
-    let mut f = File::open(source_filename).map_err(|e| format!("{:?}", e))?;
-    let mut program = Vec::new();
-    f.read_to_end(&mut program)
-        .map_err(|e| format!("{:?}", e))?;
+    let program = fs::read_to_string(source_filename).map_err(|e| format!("{:?}", e))?;
 
-    compiler.compile(&program)?;
+    compiler.compile(program)?;
     let output_filename = matches.value_of("output").unwrap();
     compiler.write_to_file(output_filename)
 }
