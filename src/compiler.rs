@@ -34,26 +34,56 @@ impl<'ctx> Compiler<'ctx> {
         Target::initialize_all(&InitializationConfig::default());
     }
 
-    pub fn compile(&self, program: &[u8]) -> Result<(), String> {
-        let mut while_blocks = VecDeque::new();
+    pub fn compile(&self, program: String) -> Result<(), String> {
+        let mut while_blocks = VecDeque::with_capacity(1024);
         let functions = self.init_functions();
         let (data, ptr) = self.build_main(&functions);
         self.init_pointers(&functions, &data, &ptr)?;
 
-        let mut pc = 0;
-        while pc < program.len() {
-            match program[pc] as char {
-                '>' => self.build_add_ptr(1, &ptr),
-                '<' => self.build_add_ptr(-1, &ptr),
-                '+' => self.build_add(1, &ptr),
-                '-' => self.build_add(-1, &ptr),
+        let mut iter = program.chars().peekable();
+        let mut consecutive = 1;
+
+        while let Some(command) = iter.next() {
+            match command {
+                '>' => {
+                    while iter.peek() == Some(&'>') {
+                        consecutive += 1;
+                        iter.next();
+                    }
+                    self.build_add_ptr(consecutive, &ptr);
+                }
+
+                '<' => {
+                    while iter.peek() == Some(&'<') {
+                        consecutive += 1;
+                        iter.next();
+                    }
+                    self.build_add_ptr(-consecutive, &ptr);
+                }
+
+                '+' => {
+                    while iter.peek() == Some(&'+') {
+                        consecutive += 1;
+                        iter.next();
+                    }
+                    self.build_add(consecutive, &ptr);
+                }
+
+                '-' => {
+                    while iter.peek() == Some(&'+') {
+                        consecutive += 1;
+                        iter.next();
+                    }
+                    self.build_add(-consecutive, &ptr);
+                }
+
                 '.' => self.build_put(&functions, &ptr),
                 ',' => self.build_get(&functions, &ptr)?,
                 '[' => self.build_while_start(&functions, &ptr, &mut while_blocks),
                 ']' => self.build_while_end(&mut while_blocks)?,
                 _ => (),
             }
-            pc += 1;
+            consecutive = 1;
         }
         self.build_free(&data);
         self.return_zero();
@@ -147,7 +177,7 @@ impl<'ctx> Compiler<'ctx> {
         self.builder.build_store(*ptr, result);
     }
 
-    fn build_add(&self, amount: i8, ptr: &PointerValue) {
+    fn build_add(&self, amount: i32, ptr: &PointerValue) {
         let i8_type = self.context.i8_type();
         let i8_amount = i8_type.const_int(amount as u64, false);
         let ptr_load = self
